@@ -1,8 +1,16 @@
 use crate::*;
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Bytes, Env, String, Symbol};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger as _, Address, Bytes, Env, String, Symbol,
+};
 
 /// Shared helper: initialize the governor with standard test parameters.
-fn setup() -> (Env, GovernorContractClient<'static>, Address, Address, Address) {
+fn setup() -> (
+    Env,
+    GovernorContractClient<'static>,
+    Address,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(GovernorContract, ());
@@ -135,29 +143,29 @@ impl LocalDummyContract {
 /// Verifies that a successful proposal can be queued and then executed after the timelock delay.
 fn test_proposal_execution_lifecycle() {
     let (env, client, admin, proposer, voter) = setup();
-    
+
     // 1. Propose
     let proposal_id = make_proposal(&env, &client, &proposer);
-    
+
     // 2. Vote (Active state)
     env.ledger().set_sequence_number(10);
     client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
-    
+
     // 3. Succeed (Past end_ledger)
     env.ledger().set_sequence_number(111);
     assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
-    
+
     // 4. Queue (Succeeded -> Queued)
     let timelock_id = env.register(sorogov_timelock::TimelockContract, ());
     let timelock_client = sorogov_timelock::TimelockContractClient::new(&env, &timelock_id);
     timelock_client.initialize(&admin, &client.address, &0); // min_delay = 0
-    
+
     let votes_token = Address::generate(&env);
     client.initialize(&admin, &votes_token, &timelock_id, &10, &100, &0, &0);
-    
+
     client.queue(&proposal_id);
     assert_eq!(client.state(&proposal_id), ProposalState::Queued);
-    
+
     // 5. Execute (Queued -> Executed)
     let dummy_id = env.register(LocalDummyContract, ());
 
@@ -165,7 +173,7 @@ fn test_proposal_execution_lifecycle() {
     let description = String::from_str(&env, "Test proposal 2");
     let fn_name = Symbol::new(&env, "noop");
     let calldata = Bytes::new(&env);
-    
+
     // Proposal 2 will be created at current ledger (111)
     let proposal_id = client.propose(&proposer, &description, &dummy_id, &fn_name, &calldata);
 
@@ -178,10 +186,10 @@ fn test_proposal_execution_lifecycle() {
     env.ledger().set_sequence_number(121); // Move to Active for new proposal
     client.cast_vote(&voter2, &proposal_id, &VoteSupport::For);
     env.ledger().set_sequence_number(222); // Past end_ledger (221)
-    
+
     assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
     client.queue(&proposal_id);
-    
+
     client.execute(&proposal_id);
     assert_eq!(client.state(&proposal_id), ProposalState::Executed);
 }
@@ -192,22 +200,22 @@ fn test_proposal_execution_lifecycle() {
 fn test_execute_fails_before_timelock_delay() {
     let (env, client, admin, proposer, voter) = setup();
     let proposal_id = make_proposal(&env, &client, &proposer);
-    
+
     env.ledger().set_sequence_number(10);
     client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
-    
+
     env.ledger().set_sequence_number(111);
-    
+
     let timelock_id = env.register(sorogov_timelock::TimelockContract, ());
     let timelock_client = sorogov_timelock::TimelockContractClient::new(&env, &timelock_id);
     // Set 1 hour delay
-    timelock_client.initialize(&admin, &client.address, &3600); 
-    
+    timelock_client.initialize(&admin, &client.address, &3600);
+
     let votes_token = Address::generate(&env);
     client.initialize(&admin, &votes_token, &timelock_id, &10, &100, &0, &0);
-    
+
     client.queue(&proposal_id);
-    
+
     // Current time is still 0 (default). ready_at will be 3600.
     client.execute(&proposal_id);
 }

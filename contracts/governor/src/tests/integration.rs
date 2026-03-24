@@ -105,10 +105,10 @@ fn test_full_proposal_lifecycle() {
         &admin,
         &votes_id,
         &timelock_id,
-        &10_u32,  // voting_delay
-        &20_u32,  // voting_period
-        &50_u32,  // quorum_numerator (not yet enforced — TODO issue #8)
-        &0_i128,  // proposal_threshold
+        &10_u32, // voting_delay
+        &20_u32, // voting_period
+        &50_u32, // quorum_numerator (not yet enforced — TODO issue #8)
+        &0_i128, // proposal_threshold
     );
 
     // ------------------------------------------------------------------
@@ -173,8 +173,7 @@ fn test_full_proposal_lifecycle() {
     governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
     governor_client.cast_vote(&bob, &proposal_id, &VoteSupport::For);
 
-    let (votes_for, votes_against, votes_abstain) =
-        governor_client.proposal_votes(&proposal_id);
+    let (votes_for, votes_against, votes_abstain) = governor_client.proposal_votes(&proposal_id);
     assert_eq!(votes_for, 2, "both voters should have cast For votes");
     assert_eq!(votes_against, 0);
     assert_eq!(votes_abstain, 0);
@@ -210,13 +209,12 @@ fn test_full_proposal_lifecycle() {
 
     // Confirm the timelock received the schedule() call. The operation is
     // pending because the delay has not yet elapsed.
-    let op_id: Bytes = env
-        .as_contract(&governor_id, || {
-            env.storage()
-                .persistent()
-                .get(&crate::DataKey::QueuedOpId(proposal_id))
-                .expect("QueuedOpId not stored after queue()")
-        });
+    let op_id: Bytes = env.as_contract(&governor_id, || {
+        env.storage()
+            .persistent()
+            .get(&crate::DataKey::QueuedOpId(proposal_id))
+            .expect("QueuedOpId not stored after queue()")
+    });
 
     // is_pending: scheduled but delay not yet elapsed.
     assert!(
