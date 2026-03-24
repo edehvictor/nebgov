@@ -330,6 +330,8 @@ impl GovernorContract {
             .get(&DataKey::Proposal(proposal_id))
             .expect("proposal not found");
 
+        assert!(!proposal.executed, "proposal already executed");
+
         let timelock_addr: Address = env
             .storage()
             .instance()
@@ -342,6 +344,7 @@ impl GovernorContract {
             .get(&DataKey::QueuedOpId(proposal_id))
             .expect("no op id — call queue() first");
 
+        // The timelock will verify if the operation is ready (delay passed).
         TimelockClient::new(&env, &timelock_addr).execute(&gov_addr, &op_id);
 
         proposal.executed = true;
