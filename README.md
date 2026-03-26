@@ -52,6 +52,8 @@ pnpm install
 pnpm dev
 ```
 
+For full setup instructions and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 ---
 
 ## Architecture
