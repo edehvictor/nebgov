@@ -85,7 +85,7 @@ export function NavBar() {
 
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-md border-b z-50 h-16 transition-all duration-200 ${
+      className={`fixed top-0 left-0 right-0 bg-white border-b z-50 h-16 transition-all duration-200 ${
         scrolled ? "shadow-sm border-gray-200" : "border-gray-100"
       }`}
     >
@@ -321,7 +321,7 @@ export function NavBar() {
                   aria-hidden
                 />
 
-                <div className="absolute right-0 top-0 bottom-0 w-80 bg-white shadow-2xl flex flex-col">
+                <div className="absolute inset-0 bg-white shadow-2xl flex flex-col">
                   <div className="p-4 flex items-center justify-between border-b border-gray-100">
                     <span className="text-lg font-bold text-gray-900">
                       Menu
@@ -368,12 +368,21 @@ export function NavBar() {
                   </nav>
 
                   {/* Wallet Section - Simple "alice — Disconnect" style */}
-                  <div className="p-4 border-t border-gray-100 bg-gray-50 mt-auto">
+                  <div className="p-4 border-t border-gray-100 bg-white mt-auto">
                     {isConnected ? (
                       <div className="flex items-center justify-between px-2 py-3">
-                        <span className="text-base font-medium text-gray-900">
-                          {address || "Connected"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-base font-medium text-gray-900">
+                            {address || "Connected"}
+                          </span>
+                          <button
+                            onClick={copyAddress}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            aria-label="Copy Address"
+                          >
+                            <Copy className="w-4 h-4" aria-hidden />
+                          </button>
+                        </div>
 
                         <button
                           onClick={handleDisconnect}
