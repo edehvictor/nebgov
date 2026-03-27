@@ -3,6 +3,7 @@ use soroban_sdk::{
     contract, contractimpl, testutils::Address as _, testutils::Ledger as _, Address, Bytes, Env,
     String, Symbol,
 };
+use sorogov_timelock::TimelockError;
 
 /// Mock votes contract that returns a high vote count for any address,
 /// allowing propose() to pass the threshold check in tests.
@@ -194,7 +195,7 @@ impl LocalDummyContract {
 
 #[test]
 /// Verifies that a successful proposal can be queued and then executed after the timelock delay.
-fn test_proposal_execution_lifecycle() {
+fn test_proposal_execution_lifecycle() -> Result<(), TimelockError> {
     let (env, client, admin, proposer, voter) = setup();
 
     // 1. Propose
@@ -243,17 +244,17 @@ fn test_proposal_execution_lifecycle() {
     client.cast_vote(&voter2, &proposal_id, &VoteSupport::For);
     env.ledger().set_sequence_number(222); // Past end_ledger (221)
 
-    assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
-    client.queue(&proposal_id);
+     assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
+     client.queue(&proposal_id);
 
-    client.execute(&proposal_id);
-    assert_eq!(client.state(&proposal_id), ProposalState::Executed);
+     client.execute(&proposal_id)?;
+     assert_eq!(client.state(&proposal_id), ProposalState::Executed);
 }
 
 #[test]
 #[should_panic(expected = "not ready")]
 /// Verifies that execution fails if the timelock delay has not yet passed.
-fn test_execute_fails_before_timelock_delay() {
+fn test_execute_fails_before_timelock_delay() -> Result<(), TimelockError> {
     let (env, client, admin, proposer, voter) = setup();
     let proposal_id = make_proposal(&env, &client, &proposer);
 
