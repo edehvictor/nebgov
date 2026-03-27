@@ -1,11 +1,12 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Symbol,
+    Vec,
 };
 
 /// Timelock error codes.
-#[contracttype]
+#[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimelockError {
     /// Operation has not yet been executed but is required as a predecessor.
@@ -37,6 +38,8 @@ pub enum DataKey {
     Governor,
 }
 
+use soroban_sdk::xdr::ToXdr;
+
 #[contract]
 pub struct TimelockContract;
 
@@ -55,18 +58,19 @@ impl TimelockContract {
     /// The ID is SHA-256(target_bytes || data_bytes || predecessor_bytes || salt_bytes).
     /// This deterministic concatenation ensures that varying any component produces
     /// a different operation ID, enabling salt-based uniqueness and predecessor tracking.
-    fn compute_op_id(env: &Env, target: &Address, data: &Bytes, predecessor: &Bytes, salt: &Bytes) -> Bytes {
-        let target_bytes = target.to_xdr(&env);
-        let data_bytes = data.to_xdr(&env);
-        let predecessor_bytes = predecessor.to_xdr(&env);
-        let salt_bytes = salt.to_xdr(&env);
-        
-        let mut combined = Vec::new(&env);
-        combined.extend_from_slice(&target_bytes);
-        combined.extend_from_slice(&data_bytes);
-        combined.extend_from_slice(&predecessor_bytes);
-        combined.extend_from_slice(&salt_bytes);
-        
+    pub fn compute_op_id(
+        env: Env,
+        target: Address,
+        data: Bytes,
+        predecessor: Bytes,
+        salt: Bytes,
+    ) -> Bytes {
+        let mut combined = Bytes::new(&env);
+        combined.append(&target.to_xdr(&env));
+        combined.append(&data);
+        combined.append(&predecessor);
+        combined.append(&salt);
+
         let hash = env.crypto().sha256(&combined);
         Bytes::from_array(&env, &hash.to_array())
     }
@@ -81,6 +85,7 @@ impl TimelockContract {
     /// scheduled operation; otherwise PredecessorNotFound is returned.
     /// `salt` is consumed during ID generation and not stored; it provides uniqueness
     /// for otherwise identical operations.
+    #[allow(clippy::too_many_arguments)]
     pub fn schedule(
         env: Env,
         caller: Address,
@@ -101,8 +106,13 @@ impl TimelockContract {
 
         // Validate predecessor exists if specified
         if !predecessor.is_empty() {
-            let pred_exists = env.storage().persistent().has(&DataKey::Operation(predecessor.clone()));
-            assert!(pred_exists, "predecessor not found");
+            let pred_exists = env
+                .storage()
+                .persistent()
+                .has(&DataKey::Operation(predecessor.clone()));
+            if !pred_exists {
+                env.panic_with_error(TimelockError::PredecessorNotFound);
+            }
         }
 
         let min_delay: u64 = env
@@ -113,7 +123,13 @@ impl TimelockContract {
         assert!(delay >= min_delay, "delay too short");
 
         let ready_at = env.ledger().timestamp() + delay;
-        let op_id = Self::compute_op_id(&env, &target, &data, &predecessor, &salt);
+        let op_id = Self::compute_op_id(
+            env.clone(),
+            target.clone(),
+            data.clone(),
+            predecessor.clone(),
+            salt,
+        );
 
         let operation = Operation {
             target,
@@ -140,9 +156,9 @@ impl TimelockContract {
     /// Enforces the delay invariant, checks predecessor completion if one is set,
     /// invokes `fn_name()` on `target` with no arguments, then marks the operation executed.
     ///
-    /// Returns PredecessorNotDone if the operation has a non-empty predecessor
+    /// Panics with TimelockError::PredecessorNotDone if the operation has a non-empty predecessor
     /// that has not yet been executed.
-    pub fn execute(env: Env, caller: Address, op_id: Bytes) -> Result<(), TimelockError> {
+    pub fn execute(env: Env, caller: Address, op_id: Bytes) {
         caller.require_auth();
         let governor: Address = env
             .storage()
@@ -155,16 +171,16 @@ impl TimelockContract {
             .storage()
             .persistent()
             .get(&DataKey::Operation(op_id.clone()))
-            .ok_or(TimelockError::PredecessorNotDone)?;
+            .expect("operation not found");
 
         assert!(!op.executed && !op.cancelled, "invalid state");
         assert!(env.ledger().timestamp() >= op.ready_at, "not ready");
 
         // Check predecessor if present
         if !op.predecessor.is_empty() {
-            let pred_done = Self::is_done(&env, op.predecessor.clone());
+            let pred_done = Self::is_done(env.clone(), op.predecessor.clone());
             if !pred_done {
-                return Err(TimelockError::PredecessorNotDone);
+                env.panic_with_error(TimelockError::PredecessorNotDone);
             }
         }
 
@@ -179,7 +195,6 @@ impl TimelockContract {
         env.invoke_contract::<()>(&op.target, &op.fn_name, Vec::new(&env));
 
         env.events().publish((symbol_short!("execute"),), op_id);
-        Ok(())
     }
 
     /// Cancel a pending operation.
@@ -247,39 +262,25 @@ impl TimelockContract {
             .instance()
             .get(&DataKey::MinDelay)
             .unwrap_or(86400)
-     }
-     
-     /// Get the governor address.
-     pub fn governor(env: Env) -> Address {
-         env.storage()
-             .instance()
-             .get(&DataKey::Governor)
-             .expect("not initialized")
-     }
-     
-     /// Get the admin address.
-     pub fn admin(env: Env) -> Address {
-         env.storage()
-             .instance()
-             .get(&DataKey::Admin)
-             .expect("not initialized")
-     }
-     
-     /// Update minimum delay. Only admin.
-     /// TODO issue #11: enforce timelock on delay changes themselves.
-     pub fn update_delay(env: Env, caller: Address, new_delay: u64) {
-         caller.require_auth();
-         let admin: Address = env
-             .storage()
-             .instance()
-             .get(&DataKey::Admin)
-             .expect("not initialized");
-         assert!(caller == admin, "only admin");
-         env.storage().instance().set(&DataKey::MinDelay, &new_delay);
-     }
-     
+    }
+
+    /// Get the governor address.
+    pub fn governor(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Governor)
+            .expect("not initialized")
+    }
+
+    /// Get the admin address.
+    pub fn admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized")
+    }
+
     /// Update minimum delay. Only admin.
-    /// TODO issue #11: enforce timelock on delay changes themselves.
     pub fn update_delay(env: Env, caller: Address, new_delay: u64) {
         caller.require_auth();
         let admin: Address = env
@@ -290,7 +291,7 @@ impl TimelockContract {
         assert!(caller == admin, "only admin");
         env.storage().instance().set(&DataKey::MinDelay, &new_delay);
     }
-
-    #[cfg(test)]
-    mod test;
 }
+
+#[cfg(test)]
+mod test;

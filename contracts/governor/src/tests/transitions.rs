@@ -195,7 +195,7 @@ impl LocalDummyContract {
 
 #[test]
 /// Verifies that a successful proposal can be queued and then executed after the timelock delay.
-fn test_proposal_execution_lifecycle() -> Result<(), TimelockError> {
+fn test_proposal_execution_lifecycle() {
     let (env, client, admin, proposer, voter) = setup();
 
     // 1. Propose
@@ -247,14 +247,14 @@ fn test_proposal_execution_lifecycle() -> Result<(), TimelockError> {
      assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
      client.queue(&proposal_id);
 
-     client.execute(&proposal_id)?;
+     client.execute(&proposal_id);
      assert_eq!(client.state(&proposal_id), ProposalState::Executed);
 }
 
 #[test]
 #[should_panic(expected = "not ready")]
 /// Verifies that execution fails if the timelock delay has not yet passed.
-fn test_execute_fails_before_timelock_delay() -> Result<(), TimelockError> {
+fn test_execute_fails_before_timelock_delay() {
     let (env, client, admin, proposer, voter) = setup();
     let proposal_id = make_proposal(&env, &client, &proposer);
 

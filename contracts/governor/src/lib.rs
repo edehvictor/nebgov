@@ -4,7 +4,7 @@ use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN,
     Env, String, Symbol, Vec,
 };
-use sorogov_timelock::TimelockError;
+// Removed unused TimelockError import
 
 /// Cross-contract interface for the Timelock contract.
 ///
