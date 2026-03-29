@@ -648,3 +648,6 @@ mod tests {
             (previous_delegate, delegatee),
         );
     }
+
+#[cfg(test)]
+mod invariant_tests;
