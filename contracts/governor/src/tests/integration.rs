@@ -19,8 +19,8 @@ use crate::{GovernorContract, GovernorContractClient, VoteType, Proposal, Propos
 
 use soroban_sdk::{
     contract, contractimpl,
-    testutils::{Address as _, Ledger as _},
-    token, Address, Bytes, Env, Symbol,
+    testutils::{Address as _, Events, Ledger as _},
+    token, Address, Bytes, Env, Symbol, TryIntoVal,
 };
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,17 @@ impl MockTarget {
 
 use sorogov_timelock::{TimelockContract, TimelockContractClient};
 use sorogov_token_votes::{TokenVotesContract, TokenVotesContractClient};
+
+fn count_topic(env: &Env, topic_name: &str) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
+            first.is_ok() && first.unwrap() == Symbol::new(env, topic_name)
+        })
+        .count()
+}
 
 // ---------------------------------------------------------------------------
 // Integration test
@@ -152,8 +163,10 @@ fn test_full_proposal_lifecycle() {
     calldatas.push_back(calldata);
 
     // Ledger starts at 0; start_ledger = 0 + 10 = 10, end_ledger = 0 + 30.
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Upgrade protocol fee to 0.3%")).into();
+    let metadata_uri = soroban_sdk::String::from_str(&env, "ipfs://QmExample");
     let proposal_id =
-        governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+        governor_client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
     assert_eq!(proposal_id, 1);
 
     // Immediately after proposal creation the state is Pending.
@@ -282,4 +295,9 @@ fn test_full_proposal_lifecycle() {
         ProposalState::Executed,
         "expected Executed after execute()"
     );
+
+    assert_eq!(count_topic(&env, "ProposalCreated"), 1);
+    assert_eq!(count_topic(&env, "VoteCast"), 2);
+    assert_eq!(count_topic(&env, "ProposalQueued"), 1);
+    assert_eq!(count_topic(&env, "ProposalExecuted"), 1);
 }

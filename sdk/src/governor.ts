@@ -20,6 +20,7 @@ import {
   Network,
   UnknownProposalStateError,
 } from "./types";
+import { hexToBytes32 } from "./utils";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -35,19 +36,19 @@ const NETWORK_PASSPHRASES: Record<Network, string> = {
 
 function scVecAddress(addrs: string[]): xdr.ScVal {
   return xdr.ScVal.scvVec(
-    addrs.map((a) => nativeToScVal(a, { type: "address" }))
+    addrs.map((a) => nativeToScVal(a, { type: "address" })),
   );
 }
 
 function scVecSymbol(syms: string[]): xdr.ScVal {
   return xdr.ScVal.scvVec(
-    syms.map((s) => nativeToScVal(s.trim(), { type: "symbol" }))
+    syms.map((s) => nativeToScVal(s.trim(), { type: "symbol" })),
   );
 }
 
 function scVecBytes(blobs: (Buffer | Uint8Array)[]): xdr.ScVal {
   return xdr.ScVal.scvVec(
-    blobs.map((b) => nativeToScVal(b, { type: "bytes" }))
+    blobs.map((b) => nativeToScVal(b, { type: "bytes" })),
   );
 }
 
@@ -73,24 +74,38 @@ export class GovernorClient {
   /**
    * Create a new governance proposal (multi-action, matching on-chain `propose`).
    *
+   * @param signer The account proposing the change
+   * @param description A brief summary of the proposal
+   * @param descriptionHash SHA-256 hash of the full description (hex string)
+   * @param metadataUri URI pointing to the full description (ipfs:// or https://)
    * @param targets Calldata targets (same length as `fnNames` / `calldatas`)
+   * @param fnNames Function names on each target
+   * @param calldatas Encoded arguments for each call
+   * @returns The unique identifier of the created proposal
    */
   async propose(
     signer: Keypair,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
-    calldatas: (Buffer | Uint8Array)[]
+    calldatas: (Buffer | Uint8Array)[],
   ): Promise<bigint> {
     if (
       targets.length !== fnNames.length ||
       targets.length !== calldatas.length
     ) {
-      throw new Error("targets, fnNames, and calldatas must have the same length");
+      throw new Error(
+        "targets, fnNames, and calldatas must have the same length",
+      );
     }
     if (targets.length === 0) {
       throw new Error("At least one on-chain action is required");
     }
+
+    // Convert hex string to BytesN<32>
+    const hashBytes = hexToBytes32(descriptionHash);
 
     const account = await this.server.getAccount(signer.publicKey());
 
@@ -103,10 +118,12 @@ export class GovernorClient {
           "propose",
           nativeToScVal(signer.publicKey(), { type: "address" }),
           nativeToScVal(description, { type: "string" }),
+          nativeToScVal(hashBytes, { type: "bytes" }),
+          nativeToScVal(metadataUri, { type: "string" }),
           scVecAddress(targets),
           scVecSymbol(fnNames),
-          scVecBytes(calldatas)
-        )
+          scVecBytes(calldatas),
+        ),
       )
       .setTimeout(30)
       .build();
@@ -130,20 +147,26 @@ export class GovernorClient {
   async proposeWithSign(
     signerPublicKey: string,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
     calldatas: (Buffer | Uint8Array)[],
-    signUnsignedXdr: (xdr: string) => Promise<string>
+    signUnsignedXdr: (xdr: string) => Promise<string>,
   ): Promise<bigint> {
     if (
       targets.length !== fnNames.length ||
       targets.length !== calldatas.length
     ) {
-      throw new Error("targets, fnNames, and calldatas must have the same length");
+      throw new Error(
+        "targets, fnNames, and calldatas must have the same length",
+      );
     }
     if (targets.length === 0) {
       throw new Error("At least one on-chain action is required");
     }
+
+    const hashBytes = hexToBytes32(descriptionHash);
 
     const account = await this.server.getAccount(signerPublicKey);
     const tx = new TransactionBuilder(account, {
@@ -155,17 +178,22 @@ export class GovernorClient {
           "propose",
           nativeToScVal(signerPublicKey, { type: "address" }),
           nativeToScVal(description, { type: "string" }),
+          nativeToScVal(hashBytes, { type: "bytes" }),
+          nativeToScVal(metadataUri, { type: "string" }),
           scVecAddress(targets),
           scVecSymbol(fnNames),
-          scVecBytes(calldatas)
-        )
+          scVecBytes(calldatas),
+        ),
       )
       .setTimeout(30)
       .build();
 
     const prepared = await this.server.prepareTransaction(tx);
     const signedXdr = await signUnsignedXdr(prepared.toXDR());
-    const signed = TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase);
+    const signed = TransactionBuilder.fromXDR(
+      signedXdr,
+      this.networkPassphrase,
+    );
     const result = await this.server.sendTransaction(signed);
     if (result.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(result)}`);
@@ -180,11 +208,11 @@ export class GovernorClient {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
         await this.server.getAccount(this.config.governorAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
       )
         .addOperation(this.contract.call("proposal_threshold"))
         .setTimeout(30)
-        .build()
+        .build(),
     );
 
     if (SorobanRpc.Api.isSimulationError(result)) return 0n;
@@ -200,7 +228,7 @@ export class GovernorClient {
     footprintSourceAccount: string,
     contractId: string,
     functionName: string,
-    args: xdr.ScVal[]
+    args: xdr.ScVal[],
   ): Promise<{
     ok: boolean;
     error?: string;
@@ -212,11 +240,11 @@ export class GovernorClient {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
         await this.server.getAccount(footprintSourceAccount),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
       )
         .addOperation(op)
         .setTimeout(30)
-        .build()
+        .build(),
     );
 
     if (SorobanRpc.Api.isSimulationError(result)) {
@@ -237,9 +265,11 @@ export class GovernorClient {
   async estimateProposeResources(
     proposer: string,
     description: string,
+    descriptionHash: string,
+    metadataUri: string,
     targets: string[],
     fnNames: string[],
-    calldatas: (Buffer | Uint8Array)[]
+    calldatas: (Buffer | Uint8Array)[],
   ): Promise<{
     ok: boolean;
     error?: string;
@@ -247,6 +277,7 @@ export class GovernorClient {
     memBytes?: string;
   }> {
     try {
+      const hashBytes = hexToBytes32(descriptionHash);
       const account = await this.server.getAccount(proposer);
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
@@ -257,10 +288,12 @@ export class GovernorClient {
             "propose",
             nativeToScVal(proposer, { type: "address" }),
             nativeToScVal(description, { type: "string" }),
+            nativeToScVal(hashBytes, { type: "bytes" }),
+            nativeToScVal(metadataUri, { type: "string" }),
             scVecAddress(targets),
             scVecSymbol(fnNames),
-            scVecBytes(calldatas)
-          )
+            scVecBytes(calldatas),
+          ),
         )
         .setTimeout(30)
         .build();
@@ -292,7 +325,7 @@ export class GovernorClient {
   async castVote(
     signer: Keypair,
     proposalId: bigint,
-    support: VoteSupport
+    support: VoteSupport,
   ): Promise<void> {
     const account = await this.server.getAccount(signer.publicKey());
 
@@ -309,8 +342,8 @@ export class GovernorClient {
           "cast_vote",
           nativeToScVal(signer.publicKey(), { type: "address" }),
           nativeToScVal(proposalId, { type: "u64" }),
-          supportScVal
-        )
+          supportScVal,
+        ),
       )
       .setTimeout(30)
       .build();
@@ -325,6 +358,46 @@ export class GovernorClient {
   }
 
   /**
+   * Same as {@link castVote} but signs with a wallet callback.
+   */
+  async castVoteWithSign(
+    signerPublicKey: string,
+    proposalId: bigint,
+    support: VoteSupport,
+    signUnsignedXdr: (xdr: string) => Promise<string>
+  ): Promise<void> {
+    const account = await this.server.getAccount(signerPublicKey);
+
+    const supportScVal = xdr.ScVal.scvVec([
+      xdr.ScVal.scvSymbol(VoteSupport[support]),
+    ]);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(
+        this.contract.call(
+          "cast_vote",
+          nativeToScVal(signerPublicKey, { type: "address" }),
+          nativeToScVal(proposalId, { type: "u64" }),
+          supportScVal
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const prepared = await this.server.prepareTransaction(tx);
+    const signedXdr = await signUnsignedXdr(prepared.toXDR());
+    const signed = TransactionBuilder.fromXDR(signedXdr, this.networkPassphrase);
+    const result = await this.server.sendTransaction(signed);
+    if (result.status === "ERROR") {
+      throw new Error(`castVoteWithSign failed: ${JSON.stringify(result)}`);
+    }
+    await this.pollForConfirmation(result.hash);
+  }
+
+  /**
    * Get the current state of a proposal.
    * TODO issue #17: decode all 7 ProposalState variants.
    */
@@ -332,13 +405,16 @@ export class GovernorClient {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
         await this.server.getAccount(this.config.governorAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
       )
         .addOperation(
-          this.contract.call("state", nativeToScVal(proposalId, { type: "u64" }))
+          this.contract.call(
+            "state",
+            nativeToScVal(proposalId, { type: "u64" }),
+          ),
         )
         .setTimeout(30)
-        .build()
+        .build(),
     );
 
     if (SorobanRpc.Api.isSimulationError(result)) {
@@ -388,16 +464,16 @@ export class GovernorClient {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
         await this.server.getAccount(this.config.governorAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
       )
         .addOperation(
           this.contract.call(
             "proposal_votes",
-            nativeToScVal(proposalId, { type: "u64" })
-          )
+            nativeToScVal(proposalId, { type: "u64" }),
+          ),
         )
         .setTimeout(30)
-        .build()
+        .build(),
     );
 
     if (SorobanRpc.Api.isSimulationError(result)) {
@@ -411,7 +487,7 @@ export class GovernorClient {
     const [votesFor, votesAgainst, votesAbstain] = scValToNative(raw) as [
       bigint,
       bigint,
-      bigint
+      bigint,
     ];
     return { votesFor, votesAgainst, votesAbstain };
   }
@@ -431,7 +507,7 @@ export class GovernorClient {
   onProposalStateChange(
     proposalId: bigint,
     onChange: (newState: ProposalState) => void,
-    pollIntervalMs: number = 10_000
+    pollIntervalMs: number = 10_000,
   ): () => void {
     let stopped = false;
     let previous: ProposalState | undefined;
@@ -464,11 +540,11 @@ export class GovernorClient {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(
         await this.server.getAccount(this.config.governorAddress),
-        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
       )
         .addOperation(this.contract.call("proposal_count"))
         .setTimeout(30)
-        .build()
+        .build(),
     );
 
     if (SorobanRpc.Api.isSimulationError(result)) return 0n;
@@ -476,6 +552,80 @@ export class GovernorClient {
     const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
       .result?.retval;
     return raw ? BigInt(scValToNative(raw)) : 0n;
+  }
+
+  /**
+   * Get the voting receipt for a specific voter on a proposal.
+   *
+   * Returns whether the voter has voted, their support choice, vote weight, and reason.
+   */
+  async getReceipt(
+    proposalId: bigint,
+    voter: string,
+  ): Promise<{
+    hasVoted: boolean;
+    support: VoteSupport;
+    weight: bigint;
+    reason: string;
+  }> {
+    const result = await this.server.simulateTransaction(
+      new TransactionBuilder(
+        await this.server.getAccount(this.config.governorAddress),
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+      )
+        .addOperation(
+          this.contract.call(
+            "get_receipt",
+            nativeToScVal(proposalId, { type: "u64" }),
+            nativeToScVal(voter, { type: "address" }),
+          ),
+        )
+        .setTimeout(30)
+        .build(),
+    );
+
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      return {
+        hasVoted: false,
+        support: VoteSupport.Against,
+        weight: 0n,
+        reason: "",
+      };
+    }
+
+    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    if (!raw) {
+      return {
+        hasVoted: false,
+        support: VoteSupport.Against,
+        weight: 0n,
+        reason: "",
+      };
+    }
+
+    const receipt = scValToNative(raw) as {
+      has_voted: boolean;
+      support: string[];
+      weight: bigint;
+      reason: string;
+    };
+
+    // Decode support enum (vector-wrapped symbol)
+    const supportMap: Record<string, VoteSupport> = {
+      Against: VoteSupport.Against,
+      For: VoteSupport.For,
+      Abstain: VoteSupport.Abstain,
+    };
+    const supportVariant = receipt.support[0];
+    const support = supportMap[supportVariant] ?? VoteSupport.Against;
+
+    return {
+      hasVoted: receipt.has_voted,
+      support,
+      weight: BigInt(receipt.weight),
+      reason: receipt.reason,
+    };
   }
 
   /**
@@ -519,7 +669,7 @@ export class GovernorClient {
   private async pollForConfirmation(
     hash: string,
     retries = 10,
-    delayMs = 2000
+    delayMs = 2000,
   ): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
     for (let i = 0; i < retries; i++) {
       await new Promise((r) => setTimeout(r, delayMs));
@@ -533,4 +683,89 @@ export class GovernorClient {
     }
     throw new Error(`Transaction not confirmed after ${retries} retries`);
   }
+
+  /**
+   * Fetch a proposal by its ID.
+   */
+  async getProposal(proposalId: bigint): Promise<Proposal> {
+    const result = await this.server.simulateTransaction(
+      new TransactionBuilder(
+        await this.server.getAccount(this.config.governorAddress),
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+      )
+        .addOperation(
+          this.contract.call("get_proposal", nativeToScVal(proposalId, { type: "u64" }))
+        )
+        .setTimeout(30)
+        .build()
+    );
+
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation error: ${result.error}`);
+    }
+
+    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    if (!raw) throw new Error("No return value");
+
+    return scValToNative(raw) as Proposal;
+  }
+}
+
+/**
+ * Compute SHA-256 hash of a proposal description.
+ *
+ * This function uses the Web Crypto API in browser environments and
+ * Node.js crypto module in server-side environments. The input is
+ * UTF-8 encoded before hashing, and the output is a 64-character
+ * lowercase hex string.
+ *
+ * @param text - The proposal description text to hash
+ * @returns Hex-encoded SHA-256 hash (64 lowercase characters)
+ */
+export async function hashDescription(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Use Web Crypto API (available in both browser and Node.js 18+)
+  if (typeof crypto !== "undefined" && crypto.subtle) {
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Fallback to Node.js crypto module
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("No crypto API available in this environment");
+}
+
+/**
+ * Synchronous version of hashDescription for environments where async is not needed.
+ * Uses the same algorithm and encoding.
+ */
+export function hashDescriptionSync(text: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+
+  // Try Node.js crypto first (synchronous)
+  if (typeof require !== "undefined") {
+    try {
+      const cryptoNode = require("crypto");
+      const hash = cryptoNode.createHash("sha256").update(data).digest("hex");
+      return hash;
+    } catch (e) {
+      // ignore and try next fallback
+    }
+  }
+
+  throw new Error("Synchronous SHA-256 is only available in Node.js environments. Use async hashDescription instead.");
 }

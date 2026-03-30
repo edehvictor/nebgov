@@ -15,23 +15,56 @@
 export { GovernorClient } from "./governor";
 export { VotesClient } from "./votes";
 export { TimelockClient } from "./timelock";
+export { TreasuryClient } from "./treasury";
 export { WrapperClient } from "./wrapper";
 export type { WrapperConfig } from "./wrapper";
+export {
+  GovernorError,
+  GovernorErrorCode,
+  TimelockError,
+  TimelockErrorCode,
+  VotesError,
+  VotesErrorCode,
+  TreasuryError,
+  TreasuryErrorCode,
+  parseGovernorError,
+  parseTimelockError,
+  parseVotesError,
+  parseTreasuryError,
+  extractContractErrorCode,
+} from "./errors";
+export type { SorobanRpcError } from "./errors";
 export {
   subscribeToProposals,
   subscribeToVotes,
   getProposalEvents,
   subscribeToProposalQueued,
   subscribeToProposalExecuted,
+  subscribeToProposalCancelled,
+  subscribeToProposalExpired,
+  subscribeToGovernorUpgraded,
+  subscribeToConfigUpdated,
 } from "./events";
 export type {
   SorobanEvent,
   SubscriptionOptions,
   ProposalCreatedEventData,
+  VoteCastEventData,
+  ProposalQueuedEventData,
+  ProposalExecutedEventData,
+  ProposalCancelledEventData,
+  ProposalExpiredEventData,
+  GovernorUpgradedEventData,
+  ConfigUpdatedEventData,
 } from "./events";
 export {
   parseProposalCreatedEvent,
+  parseVoteCastEvent,
   parseProposalQueuedEvent,
   parseProposalExecutedEvent,
+  parseProposalCancelledEvent,
+  parseProposalExpiredEvent,
+  parseGovernorUpgradedEvent,
+  parseConfigUpdatedEvent,
 } from "./events";
 export * from "./types";
