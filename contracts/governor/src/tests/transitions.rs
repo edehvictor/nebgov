@@ -1,7 +1,7 @@
 use crate::*;
 use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, testutils::Ledger as _, Address, Bytes, Env,
-    String, Symbol,
+    contract, contractimpl, testutils::Address as _, testutils::Events, testutils::Ledger as _,
+    Address, Bytes, Env, String, Symbol, TryIntoVal,
 };
 
 /// Mock votes contract that returns a high vote count for any address,
@@ -70,7 +70,22 @@ fn make_proposal(env: &Env, client: &GovernorContractClient, proposer: &Address)
     let mut calldatas = soroban_sdk::Vec::new(env);
     calldatas.push_back(calldata);
 
-    client.propose(proposer, &description, &targets, &fn_names, &calldatas)
+    // Compute SHA-256 hash of the description
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(env, b"Test proposal")).into();
+    let metadata_uri = String::from_str(env, "https://example.com/metadata");
+
+    client.propose(proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas)
+}
+
+fn count_topic(env: &Env, topic_name: &str) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
+            first.is_ok() && first.unwrap() == Symbol::new(env, topic_name)
+        })
+        .count()
 }
 
 #[test]
@@ -102,6 +117,11 @@ fn test_defeated_when_no_votes() {
     // end_ledger = 10 + 100 = 110. Advance to 111.
     env.ledger().set_sequence_number(111);
     assert_eq!(client.state(&proposal_id), ProposalState::Defeated);
+    assert_eq!(count_topic(&env, "ProposalExpired"), 1);
+
+    // Re-reading state should not emit duplicate expiry events.
+    assert_eq!(client.state(&proposal_id), ProposalState::Defeated);
+    assert_eq!(count_topic(&env, "ProposalExpired"), 1);
 }
 
 #[test]
@@ -160,6 +180,7 @@ fn test_cancelled_by_proposer() {
 
     client.cancel(&proposer, &proposal_id);
     assert_eq!(client.state(&proposal_id), ProposalState::Cancelled);
+    assert_eq!(count_topic(&env, "ProposalCancelled"), 1);
 }
 
 #[test]
@@ -233,7 +254,10 @@ fn test_proposal_execution_lifecycle() {
     let targets = Vec::from_array(&env, [dummy_id.clone()]);
     let fn_names = Vec::from_array(&env, [fn_name.clone()]);
     let calldatas = Vec::from_array(&env, [calldata.clone()]);
-    let proposal_id = client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Test proposal 2")).into();
+    let metadata_uri = String::from_str(&env, "https://example.com/metadata2");
+
+    let proposal_id = client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
 
     // Proposal 2 timing:
     // start_ledger = 111 + 10 = 121
