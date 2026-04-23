@@ -1,9 +1,10 @@
 {
   "generators": {
-    "address": 7,
+    "address": 8,
     "nonce": 0
   },
   "auth": [
+    [],
     [],
     [
       [
@@ -37,6 +38,19 @@
                     "hi": 0,
                     "lo": 0
                   }
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "Extended"
+                    }
+                  ]
+                },
+                {
+                  "u32": 120960
                 }
               ]
             }
@@ -61,13 +75,31 @@
                   "string": "Test proposal"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                  "bytes": "1c6b4a6130bbe90b01411cf29743a638cf8520f556dcbdc570ff655bfafd2c0a"
                 },
                 {
-                  "symbol": "noop"
+                  "string": "https://example.com/metadata"
                 },
                 {
-                  "bytes": ""
+                  "vec": [
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                    }
+                  ]
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "exec"
+                    }
+                  ]
+                },
+                {
+                  "vec": [
+                    {
+                      "bytes": ""
+                    }
+                  ]
                 }
               ]
             }
@@ -207,10 +239,14 @@
                   "map": [
                     {
                       "key": {
-                        "symbol": "calldata"
+                        "symbol": "calldatas"
                       },
                       "val": {
-                        "bytes": ""
+                        "vec": [
+                          {
+                            "bytes": ""
+                          }
+                        ]
                       }
                     },
                     {
@@ -231,6 +267,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "description_hash"
+                      },
+                      "val": {
+                        "bytes": "1c6b4a6130bbe90b01411cf29743a638cf8520f556dcbdc570ff655bfafd2c0a"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "end_ledger"
                       },
                       "val": {
@@ -247,10 +291,14 @@
                     },
                     {
                       "key": {
-                        "symbol": "fn_name"
+                        "symbol": "fn_names"
                       },
                       "val": {
-                        "symbol": "noop"
+                        "vec": [
+                          {
+                            "symbol": "exec"
+                          }
+                        ]
                       }
                     },
                     {
@@ -259,6 +307,22 @@
                       },
                       "val": {
                         "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "metadata_uri"
+                      },
+                      "val": {
+                        "string": "https://example.com/metadata"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "op_ids"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     },
                     {
@@ -287,10 +351,14 @@
                     },
                     {
                       "key": {
-                        "symbol": "target"
+                        "symbol": "targets"
                       },
                       "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                        "vec": [
+                          {
+                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                          }
+                        ]
                       }
                     },
                     {
@@ -311,7 +379,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 1
+                          "lo": 1000000
                         }
                       }
                     },
@@ -333,6 +401,97 @@
             "ext": "v0"
           },
           4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "VoteReceipt"
+                },
+                {
+                  "u64": 1
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "VoteReceipt"
+                    },
+                    {
+                      "u64": 1
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "has_voted"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "reason"
+                      },
+                      "val": {
+                        "string": ""
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "support"
+                      },
+                      "val": {
+                        "vec": [
+                          {
+                            "symbol": "Against"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "weight"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 1000000
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4105
         ]
       ],
       [
@@ -374,12 +533,36 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "Guardian"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "ProposalCount"
                             }
                           ]
                         },
                         "val": {
                           "u64": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "ProposalGracePeriod"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 120960
                         }
                       },
                       {
@@ -425,6 +608,34 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "UseDynamicQuorum"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": false
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VoteType"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "symbol": "Extended"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "VotesToken"
                             }
                           ]
@@ -455,6 +666,22 @@
                         },
                         "val": {
                           "u32": 100
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "VotingStrategy"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "symbol": "Single"
+                            }
+                          ]
                         }
                       }
                     ]
@@ -498,6 +725,38 @@
             "ext": "v0"
           },
           6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "storage": null
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
         ]
       ],
       [

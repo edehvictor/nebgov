@@ -10,6 +10,11 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { GovernorConfig, Network } from "./types";
+import {
+  TimelockError,
+  TimelockErrorCode,
+  parseTimelockError,
+} from "./errors";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban-rpc.mainnet.stellar.gateway.fm",
@@ -99,12 +104,17 @@ export class TimelockClient {
 
     const result = await this.server.sendTransaction(prepared);
     if (result.status === "ERROR") {
-      throw new Error(`schedule failed: ${JSON.stringify(result)}`);
+      throw parseTimelockError(result);
     }
 
     const confirmed = await this.pollForConfirmation(result.hash);
     const returnVal = confirmed.returnValue;
-    if (!returnVal) throw new Error("schedule: missing return value");
+    if (!returnVal) {
+      throw new TimelockError(
+        TimelockErrorCode.MissingReturnValue,
+        "No return value from schedule"
+      );
+    }
 
     const bytes = scValToNative(returnVal) as Uint8Array;
     return Buffer.from(bytes).toString("hex");
@@ -220,7 +230,7 @@ export class TimelockClient {
 
     const result = await this.server.sendTransaction(prepared);
     if (result.status === "ERROR") {
-      throw new Error(`execute failed: ${JSON.stringify(result)}`);
+      throw parseTimelockError(result);
     }
     await this.pollForConfirmation(result.hash);
   }
@@ -256,7 +266,7 @@ export class TimelockClient {
 
     const result = await this.server.sendTransaction(prepared);
     if (result.status === "ERROR") {
-      throw new Error(`cancel failed: ${JSON.stringify(result)}`);
+      throw parseTimelockError(result);
     }
     await this.pollForConfirmation(result.hash);
   }
@@ -355,9 +365,15 @@ export class TimelockClient {
         return status as SorobanRpc.Api.GetSuccessfulTransactionResponse;
       }
       if (status.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-        throw new Error(`Transaction failed: ${hash}`);
+        throw new TimelockError(
+          TimelockErrorCode.TransactionFailed,
+          `Transaction failed: ${hash}`
+        );
       }
     }
-    throw new Error(`Transaction not confirmed after ${retries} retries`);
+    throw new TimelockError(
+      TimelockErrorCode.TransactionTimeout,
+      `Transaction not confirmed after ${retries} retries`
+    );
   }
 }

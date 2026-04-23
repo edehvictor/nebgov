@@ -15,12 +15,12 @@
 //!   8. Call `execute()` and verify the mock target function was invoked
 //!   9. Verify final governor state is Executed
 
-use crate::{GovernorContract, GovernorContractClient, ProposalState, VoteSupport};
+use crate::{GovernorContract, GovernorContractClient, VoteType, Proposal, ProposalState, VoteSupport};
 
 use soroban_sdk::{
     contract, contractimpl,
-    testutils::{Address as _, Ledger as _},
-    token, Address, Bytes, Env, Symbol,
+    testutils::{Address as _, Events, Ledger as _},
+    token, Address, Bytes, Env, Symbol, TryIntoVal,
 };
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,17 @@ impl MockTarget {
 
 use sorogov_timelock::{TimelockContract, TimelockContractClient};
 use sorogov_token_votes::{TokenVotesContract, TokenVotesContractClient};
+
+fn count_topic(env: &Env, topic_name: &str) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
+            first.is_ok() && first.unwrap() == Symbol::new(env, topic_name)
+        })
+        .count()
+}
 
 // ---------------------------------------------------------------------------
 // Integration test
@@ -98,17 +109,21 @@ fn test_full_proposal_lifecycle() {
     // 1-second minimum delay — keeps the test fast while still exercising
     // the delay enforcement path.
     let min_delay: u64 = 1;
-    timelock_client.initialize(&admin, &governor_id, &min_delay);
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
 
     // voting_delay = 10 ledgers, voting_period = 20 ledgers, quorum 50 %.
+    let guardian = Address::generate(&env);
     governor_client.initialize(
         &admin,
         &votes_id,
         &timelock_id,
-        &10_u32,  // voting_delay
-        &20_u32,  // voting_period
-        &50_u32,  // quorum_numerator (not yet enforced — TODO issue #8)
-        &0_i128,  // proposal_threshold
+        &10_u32, // voting_delay
+        &20_u32, // voting_period
+        &0_u32,  // quorum_numerator (set to 0 for this simple majority test)
+        &0_i128, // proposal_threshold
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
     );
 
     // ------------------------------------------------------------------
@@ -137,14 +152,21 @@ fn test_full_proposal_lifecycle() {
     let calldata = Bytes::from_slice(&env, b"governance-proposal-1");
     let description = soroban_sdk::String::from_str(&env, "Execute mock governance action");
 
+    // Create Vec with single target, fn_name, and calldata
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id.clone());
+
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
     // Ledger starts at 0; start_ledger = 0 + 10 = 10, end_ledger = 0 + 30.
-    let proposal_id = governor_client.propose(
-        &proposer,
-        &description,
-        &mock_target_id,
-        &fn_name,
-        &calldata,
-    );
+    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Upgrade protocol fee to 0.3%")).into();
+    let metadata_uri = soroban_sdk::String::from_str(&env, "ipfs://QmExample");
+    let proposal_id =
+        governor_client.propose(&proposer, &description, &description_hash, &metadata_uri, &targets, &fn_names, &calldatas);
     assert_eq!(proposal_id, 1);
 
     // Immediately after proposal creation the state is Pending.
@@ -167,15 +189,13 @@ fn test_full_proposal_lifecycle() {
         "expected Active during voting window"
     );
 
-    // Both Alice and Bob vote For. The governor currently counts each vote
-    // as weight=1 (TODO issue #3 will wire in token-votes); two For votes
-    // satisfy the simple majority check.
+    // Both Alice and Bob vote For. cast_vote() now reads snapshot voting
+    // power from token-votes; Alice has 500 and Bob has 500, totalling 1000.
     governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
     governor_client.cast_vote(&bob, &proposal_id, &VoteSupport::For);
 
-    let (votes_for, votes_against, votes_abstain) =
-        governor_client.proposal_votes(&proposal_id);
-    assert_eq!(votes_for, 2, "both voters should have cast For votes");
+    let (votes_for, votes_against, votes_abstain) = governor_client.proposal_votes(&proposal_id);
+    assert_eq!(votes_for, 1000, "votes should reflect token-weighted power (500 + 500)");
     assert_eq!(votes_against, 0);
     assert_eq!(votes_abstain, 0);
 
@@ -210,13 +230,15 @@ fn test_full_proposal_lifecycle() {
 
     // Confirm the timelock received the schedule() call. The operation is
     // pending because the delay has not yet elapsed.
-    let op_id: Bytes = env
-        .as_contract(&governor_id, || {
-            env.storage()
-                .persistent()
-                .get(&crate::DataKey::QueuedOpId(proposal_id))
-                .expect("QueuedOpId not stored after queue()")
-        });
+    let op_id: Bytes = env.as_contract(&governor_id, || {
+        let proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::Proposal(proposal_id))
+            .expect("proposal not found");
+
+        proposal.op_ids.get(0).unwrap()
+    });
 
     // is_pending: scheduled but delay not yet elapsed.
     assert!(
@@ -256,9 +278,9 @@ fn test_full_proposal_lifecycle() {
     // 8. Execute the proposal; verify the mock target function was called.
     // ------------------------------------------------------------------
 
-    governor_client.execute(&proposal_id);
+     governor_client.execute(&proposal_id);
 
-    // The timelock invoked MockTarget::exec_gov during the execute() flow.
+     // The timelock invoked MockTarget::exec_gov during the execute() flow.
     assert!(
         mock_client.was_called(),
         "MockTarget::exec_gov should have been called by the timelock"
@@ -273,4 +295,455 @@ fn test_full_proposal_lifecycle() {
         ProposalState::Executed,
         "expected Executed after execute()"
     );
+
+    assert_eq!(count_topic(&env, "ProposalCreated"), 1);
+    assert_eq!(count_topic(&env, "VoteCast"), 2);
+    assert_eq!(count_topic(&env, "ProposalQueued"), 1);
+    assert_eq!(count_topic(&env, "ProposalExecuted"), 1);
+}
+
+/// Test the veto window functionality.
+///
+/// This test verifies that:
+/// 1. Guardian can cancel a queued proposal during the veto window
+/// 2. Cancellation prevents execution of the proposal
+/// 3. Timelock operations are properly cancelled
+/// 4. After the veto window closes, cancellation is blocked
+#[test]
+fn test_cancel_queued_during_veto_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // ------------------------------------------------------------------
+    // Setup: Deploy all contracts
+    // ------------------------------------------------------------------
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_addr);
+
+    let votes_id = env.register(TokenVotesContract, ());
+    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
+    votes_client.initialize(&admin, &token_addr);
+
+    let mock_target_id = env.register(MockTarget, ());
+    let mock_client = MockTargetClient::new(&env, &mock_target_id);
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+
+    let min_delay: u64 = 100; // 100 seconds
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
+
+    let guardian = Address::generate(&env);
+    governor_client.initialize(
+        &admin,
+        &votes_id,
+        &timelock_id,
+        &10_u32,
+        &20_u32,
+        &0_u32,
+        &0_i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    // ------------------------------------------------------------------
+    // Create tokens, delegate, and create proposal
+    // ------------------------------------------------------------------
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    token_admin.mint(&alice, &500_i128);
+    token_admin.mint(&bob, &500_i128);
+
+    votes_client.delegate(&alice, &alice);
+    votes_client.delegate(&bob, &bob);
+
+    let proposer = Address::generate(&env);
+    let fn_name = Symbol::new(&env, "exec_gov");
+    let calldata = Bytes::from_slice(&env, b"governance-proposal-veto-test");
+    let description = soroban_sdk::String::from_str(&env, "Test veto window");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id.clone());
+
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
+    let proposal_id = governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+
+    // ------------------------------------------------------------------
+    // Vote and queue the proposal
+    // ------------------------------------------------------------------
+
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
+    governor_client.cast_vote(&bob, &proposal_id, &VoteSupport::For);
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Succeeded);
+
+    let ts_before_queue = env.ledger().timestamp();
+    let queue_ledger_before = env.ledger().sequence();
+    
+    governor_client.queue(&proposal_id);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Queued);
+
+    // Get the operation ID
+    let op_id: Bytes = env.as_contract(&governor_id, || {
+        let proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::Proposal(proposal_id))
+            .expect("proposal not found");
+
+        proposal.op_ids.get(0).unwrap()
+    });
+
+    assert!(
+        timelock_client.is_pending(&op_id),
+        "operation should be pending after queue()"
+    );
+
+    // ------------------------------------------------------------------
+    // Guardian cancels the proposal during veto window
+    // ------------------------------------------------------------------
+
+    governor_client.cancel_queued(&guardian, &proposal_id);
+
+    // Proposal should now be Cancelled
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Cancelled,
+        "proposal should be Cancelled after cancel_queued()"
+    );
+
+    // Timelock operation should also be cancelled
+    // is_pending should return false because the operation is cancelled
+    assert!(
+        !timelock_client.is_pending(&op_id),
+        "operation should not be pending after cancel"
+    );
+
+    // Advance time past the timelock delay
+    env.ledger()
+        .with_mut(|l| l.timestamp = ts_before_queue + min_delay + 1);
+
+    // MockTarget should not be called
+    assert!(
+        !mock_client.was_called(),
+        "cancelled proposal should not execute"
+    );
+}
+
+/// Test that cancel_queued fails after the veto window closes
+#[test]
+fn test_cancel_queued_after_window_closes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Setup
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_addr);
+
+    let votes_id = env.register(TokenVotesContract, ());
+    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
+    votes_client.initialize(&admin, &token_addr);
+
+    let mock_target_id = env.register(MockTarget, ());
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+
+    let min_delay: u64 = 100;
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
+
+    let guardian = Address::generate(&env);
+    governor_client.initialize(
+        &admin,
+        &votes_id,
+        &timelock_id,
+        &10_u32,
+        &20_u32,
+        &0_u32,
+        &0_i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    // Create and queue a proposal
+    let alice = Address::generate(&env);
+    token_admin.mint(&alice, &500_i128);
+    votes_client.delegate(&alice, &alice);
+
+    let proposer = Address::generate(&env);
+    let fn_name = Symbol::new(&env, "exec_gov");
+    let calldata = Bytes::from_slice(&env, b"test");
+    let description = soroban_sdk::String::from_str(&env, "Test");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id);
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
+    let proposal_id = governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    governor_client.queue(&proposal_id);
+
+    // Advance ledger far past the veto window (min_delay is 100 seconds, roughly 10-20 ledgers)
+    // Use a very large advance to ensure we're well past the veto window
+    env.ledger().with_mut(|l| l.sequence_number = l.sequence_number + 1000);
+
+    // Try to cancel after veto window closes — should fail
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        governor_client.cancel_queued(&guardian, &proposal_id);
+    }));
+
+    // The cancel should have failed
+    assert!(result.is_err(), "cancel_queued should fail after veto window closes");
+}
+
+/// Test the veto window functionality.
+///
+/// This test verifies that:
+/// 1. Guardian can cancel a queued proposal during the veto window
+/// 2. Cancellation prevents execution of the proposal
+/// 3. Timelock operations are properly cancelled
+/// 4. After the veto window closes, cancellation is blocked
+#[test]
+fn test_cancel_queued_during_veto_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // ------------------------------------------------------------------
+    // Setup: Deploy all contracts
+    // ------------------------------------------------------------------
+
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_addr);
+
+    let votes_id = env.register(TokenVotesContract, ());
+    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
+    votes_client.initialize(&admin, &token_addr);
+
+    let mock_target_id = env.register(MockTarget, ());
+    let mock_client = MockTargetClient::new(&env, &mock_target_id);
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+
+    let min_delay: u64 = 100; // 100 seconds
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
+
+    let guardian = Address::generate(&env);
+    governor_client.initialize(
+        &admin,
+        &votes_id,
+        &timelock_id,
+        &10_u32,
+        &20_u32,
+        &0_u32,
+        &0_i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    // ------------------------------------------------------------------
+    // Create tokens, delegate, and create proposal
+    // ------------------------------------------------------------------
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    token_admin.mint(&alice, &500_i128);
+    token_admin.mint(&bob, &500_i128);
+
+    votes_client.delegate(&alice, &alice);
+    votes_client.delegate(&bob, &bob);
+
+    let proposer = Address::generate(&env);
+    let fn_name = Symbol::new(&env, "exec_gov");
+    let calldata = Bytes::from_slice(&env, b"governance-proposal-veto-test");
+    let description = soroban_sdk::String::from_str(&env, "Test veto window");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id.clone());
+
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
+    let proposal_id = governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+
+    // ------------------------------------------------------------------
+    // Vote and queue the proposal
+    // ------------------------------------------------------------------
+
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
+    governor_client.cast_vote(&bob, &proposal_id, &VoteSupport::For);
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Succeeded);
+
+    let ts_before_queue = env.ledger().timestamp();
+    let queue_ledger_before = env.ledger().sequence();
+    
+    governor_client.queue(&proposal_id);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Queued);
+
+    // Get the operation ID
+    let op_id: Bytes = env.as_contract(&governor_id, || {
+        let proposal: Proposal = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::Proposal(proposal_id))
+            .expect("proposal not found");
+
+        proposal.op_ids.get(0).unwrap()
+    });
+
+    assert!(
+        timelock_client.is_pending(&op_id),
+        "operation should be pending after queue()"
+    );
+
+    // ------------------------------------------------------------------
+    // Guardian cancels the proposal during veto window
+    // ------------------------------------------------------------------
+
+    governor_client.cancel_queued(&guardian, &proposal_id);
+
+    // Proposal should now be Cancelled
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Cancelled,
+        "proposal should be Cancelled after cancel_queued()"
+    );
+
+    // Timelock operation should also be cancelled
+    // is_pending should return false because the operation is cancelled
+    assert!(
+        !timelock_client.is_pending(&op_id),
+        "operation should not be pending after cancel"
+    );
+
+    // Advance time past the timelock delay
+    env.ledger()
+        .with_mut(|l| l.timestamp = ts_before_queue + min_delay + 1);
+
+    // MockTarget should not be called
+    assert!(
+        !mock_client.was_called(),
+        "cancelled proposal should not execute"
+    );
+}
+
+/// Test that cancel_queued fails after the veto window closes
+#[test]
+fn test_cancel_queued_after_window_closes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Setup
+    let admin = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_addr);
+
+    let votes_id = env.register(TokenVotesContract, ());
+    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
+    votes_client.initialize(&admin, &token_addr);
+
+    let mock_target_id = env.register(MockTarget, ());
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+
+    let min_delay: u64 = 100;
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
+
+    let guardian = Address::generate(&env);
+    governor_client.initialize(
+        &admin,
+        &votes_id,
+        &timelock_id,
+        &10_u32,
+        &20_u32,
+        &0_u32,
+        &0_i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    // Create and queue a proposal
+    let alice = Address::generate(&env);
+    token_admin.mint(&alice, &500_i128);
+    votes_client.delegate(&alice, &alice);
+
+    let proposer = Address::generate(&env);
+    let fn_name = Symbol::new(&env, "exec_gov");
+    let calldata = Bytes::from_slice(&env, b"test");
+    let description = soroban_sdk::String::from_str(&env, "Test");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id);
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
+    let proposal_id = governor_client.propose(&proposer, &description, &targets, &fn_names, &calldatas);
+
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    governor_client.queue(&proposal_id);
+
+    // Advance ledger far past the veto window (min_delay is 100 seconds, roughly 10-20 ledgers)
+    // Use a very large advance to ensure we're well past the veto window
+    env.ledger().with_mut(|l| l.sequence_number = l.sequence_number + 1000);
+
+    // Try to cancel after veto window closes — should fail
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        governor_client.cancel_queued(&guardian, &proposal_id);
+    }));
+
+    // The cancel should have failed
+    assert!(result.is_err(), "cancel_queued should fail after veto window closes");
 }

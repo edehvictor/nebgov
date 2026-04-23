@@ -8,11 +8,22 @@ mod transitions;
 // wasm32-unknown-unknown`. The unit tests below focus on the auth guard,
 // which is the security-critical invariant.
 
-use crate::{GovernorContract, GovernorContractClient};
+use crate::{GovernorContract, GovernorContractClient, GovernorSettings, VoteType};
 use soroban_sdk::{
-    testutils::{Address as _, MockAuth, MockAuthInvoke},
-    Address, BytesN, Env, IntoVal,
+    testutils::{Address as _, Events, MockAuth, MockAuthInvoke},
+    Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
 };
+
+fn count_topic(env: &Env, topic_name: &str) -> usize {
+    env.events()
+        .all()
+        .iter()
+        .filter(|(_, topics, _)| {
+            let first: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(env);
+            first.is_ok() && first.unwrap() == Symbol::new(env, topic_name)
+        })
+        .count()
+}
 
 #[test]
 #[should_panic]
@@ -55,6 +66,7 @@ fn upgrade_rejects_admin_acting_as_direct_caller() {
     let contract_id = env.register(GovernorContract, ());
 
     env.mock_all_auths();
+    let guardian = Address::generate(&env);
     GovernorContractClient::new(&env, &contract_id).initialize(
         &admin,
         &votes_token,
@@ -63,6 +75,9 @@ fn upgrade_rejects_admin_acting_as_direct_caller() {
         &1000u32,
         &40u32,
         &0i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
     );
 
     let new_wasm_hash = BytesN::from_array(&env, &[3u8; 32]);
@@ -81,4 +96,102 @@ fn upgrade_rejects_admin_acting_as_direct_caller() {
     }]);
 
     client.upgrade(&new_wasm_hash);
+}
+
+#[test]
+#[should_panic]
+fn update_config_rejects_caller_that_is_not_the_contract_address() {
+    let env = Env::default();
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let attacker = Address::generate(&env);
+    let new_settings = GovernorSettings {
+        voting_delay: 200,
+        voting_period: 2000,
+        quorum_numerator: 10,
+        proposal_threshold: 500,
+        guardian: Address::generate(&env),
+        vote_type: VoteType::Extended,
+        proposal_grace_period: 120_960,
+        use_dynamic_quorum: false,
+        reflector_oracle: None,
+        min_quorum_usd: 0,
+    };
+
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "update_config",
+            args: (new_settings.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.update_config(&new_settings);
+}
+
+#[test]
+fn update_config_succeeds_with_contract_self_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let votes_token = Address::generate(&env);
+    let timelock = Address::generate(&env);
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let guardian = Address::generate(&env);
+    client.initialize(
+        &admin,
+        &votes_token,
+        &timelock,
+        &100u32,
+        &1000u32,
+        &4u32,
+        &0i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    let old_settings = client.get_settings();
+    assert_eq!(old_settings.voting_delay, 100);
+    assert_eq!(old_settings.voting_period, 1000);
+    assert_eq!(old_settings.quorum_numerator, 4);
+    assert_eq!(old_settings.proposal_threshold, 0);
+
+    let new_settings = GovernorSettings {
+        voting_delay: 200,
+        voting_period: 2000,
+        quorum_numerator: 5,
+        proposal_threshold: 1000,
+        guardian: old_settings.guardian.clone(),
+        vote_type: VoteType::Simple,
+        proposal_grace_period: 604800,
+        use_dynamic_quorum: false,
+        reflector_oracle: None,
+        min_quorum_usd: 0,
+    };
+
+    client.update_config(&new_settings);
+
+    let updated = client.get_settings();
+    assert_eq!(updated.voting_delay, 200);
+    assert_eq!(updated.voting_period, 2000);
+    assert_eq!(updated.quorum_numerator, 5);
+    assert_eq!(updated.proposal_threshold, 1000);
+    assert_eq!(count_topic(&env, "ConfigUpdated"), 1);
+}
+
+#[test]
+fn governor_upgraded_event_helper_emits_expected_topic() {
+    let env = Env::default();
+    let old_hash = BytesN::from_array(&env, &[7u8; 32]);
+    let new_hash = BytesN::from_array(&env, &[8u8; 32]);
+
+    crate::events::emit_governor_upgraded(&env, &old_hash, &new_hash);
+
+    assert_eq!(count_topic(&env, "GovernorUpgraded"), 1);
 }
