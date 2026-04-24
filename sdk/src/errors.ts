@@ -22,6 +22,17 @@ export enum GovernorErrorCode {
   UnauthorizedCancel = 1,
   InvalidSupport     = 2,
   ProposalExpired    = 3,
+  CalldataTooLarge   = 4,
+  InvalidCalldata    = 5,
+  ProposalRateLimited = 6,
+  ContractPaused     = 7,
+  UnauthorizedPause  = 8,
+  EmptyMetadataUri   = 9,
+  InvalidVotingDelay = 10,
+  InvalidVotingPeriod = 11,
+  InvalidQuorumNumerator = 12,
+  InvalidProposalThreshold = 13,
+  InvalidGasEstimationState = 14,
 
   // SDK-level codes
   ProposalNotFound    = 100,
@@ -36,6 +47,17 @@ const GOVERNOR_MESSAGES: Record<GovernorErrorCode, string> = {
   [GovernorErrorCode.UnauthorizedCancel]: "Unauthorized: only the proposer or guardian can cancel this proposal",
   [GovernorErrorCode.InvalidSupport]:     "Invalid vote support: this governance type does not allow abstain votes",
   [GovernorErrorCode.ProposalExpired]:    "Proposal has expired and can no longer be acted upon",
+  [GovernorErrorCode.CalldataTooLarge]:   "Proposal calldata exceeds the configured size limit",
+  [GovernorErrorCode.InvalidCalldata]:    "Proposal calldata is invalid",
+  [GovernorErrorCode.ProposalRateLimited]: "Proposal creation is rate limited",
+  [GovernorErrorCode.ContractPaused]:     "Governor contract is paused",
+  [GovernorErrorCode.UnauthorizedPause]:  "Unauthorized: caller cannot pause or unpause the governor",
+  [GovernorErrorCode.EmptyMetadataUri]:   "Proposal metadata URI cannot be empty",
+  [GovernorErrorCode.InvalidVotingDelay]: "Invalid voting delay",
+  [GovernorErrorCode.InvalidVotingPeriod]: "Invalid voting period",
+  [GovernorErrorCode.InvalidQuorumNumerator]: "Invalid quorum numerator",
+  [GovernorErrorCode.InvalidProposalThreshold]: "Invalid proposal threshold",
+  [GovernorErrorCode.InvalidGasEstimationState]: "Cannot estimate gas for this proposal state",
   [GovernorErrorCode.ProposalNotFound]:   "Proposal not found",
   [GovernorErrorCode.SimulationFailed]:   "Simulation failed",
   [GovernorErrorCode.TransactionFailed]:  "Transaction failed",
@@ -244,6 +266,10 @@ export function parseTimelockError(
  * Codes 1–99 mirror on-chain contract error values; SDK-level codes start at 100.
  */
 export enum TreasuryErrorCode {
+  // On-chain contract errors (match contracts/treasury/src/lib.rs)
+  SingleTransferExceeded = 1,
+  DailyLimitExceeded     = 2,
+
   // SDK-level codes
   SimulationFailed   = 100,
   TransactionFailed  = 101,
@@ -253,6 +279,8 @@ export enum TreasuryErrorCode {
 }
 
 const TREASURY_MESSAGES: Record<TreasuryErrorCode, string> = {
+  [TreasuryErrorCode.SingleTransferExceeded]: "Proposed transfer exceeds maximum allowed per single transfer",
+  [TreasuryErrorCode.DailyLimitExceeded]:     "Proposed transfer would exceed daily spending limit",
   [TreasuryErrorCode.SimulationFailed]:   "Simulation failed",
   [TreasuryErrorCode.TransactionFailed]:  "Transaction failed",
   [TreasuryErrorCode.TransactionTimeout]: "Transaction timed out",
